@@ -1,0 +1,25 @@
+{
+  "name": "parabank-multi-region-test-automation",
+  "version": "1.0.0",
+  "description": "Production-style multi-region test automation framework for ParaBank",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run test:all",
+    "test:api": "REGION=${REGION:-eu} npx playwright test --project=api",
+    "test:web": "REGION=${REGION:-eu} npx playwright test --project=web",
+    "test:all": "REGION=${REGION:-eu} npx playwright test",
+    "report": "npx playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.50.0",
+    "@types/node": "^26.1.1",
+    "eslint": "^9.19.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.23.0",
+    "zod": "^3.24.0"
+  }
+}

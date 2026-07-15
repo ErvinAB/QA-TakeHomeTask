@@ -1,0 +1,10 @@
+node_modules/
+dist/
+playwright-report/
+test-results/
+.env
+*.mp4
+*.png
+*.jpg
+*.zip
+trace.zip

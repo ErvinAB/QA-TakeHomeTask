@@ -1,0 +1,113 @@
+name: Test Automation
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      layer:
+        description: "Test layer to run"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - api
+          - web
+          - all
+      region:
+        description: "Region to test against"
+        required: true
+        default: "eu"
+        type: choice
+        options:
+          - eu
+          - us
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint-and-typecheck:
+    name: Lint & Typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: "npm"
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+
+  api-tests:
+    name: API Tests (${{ matrix.region }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: lint-and-typecheck
+    if: |
+      (github.event_name == 'workflow_dispatch' && (github.event.inputs.layer == 'api' || github.event.inputs.layer == 'all')) ||
+      (github.event_name != 'workflow_dispatch')
+    strategy:
+      fail-fast: false
+      matrix:
+        region: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.event.inputs.region)) || fromJSON('["eu", "us"]') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: "npm"
+      - run: npm ci
+      - name: Run API tests
+        env:
+          REGION: ${{ matrix.region }}
+        run: npm run test:api
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: api-results-${{ matrix.region }}
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 14
+
+  web-tests:
+    name: Web Tests (${{ matrix.region }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: lint-and-typecheck
+    if: |
+      (github.event_name == 'workflow_dispatch' && (github.event.inputs.layer == 'web' || github.event.inputs.layer == 'all')) ||
+      (github.event_name != 'workflow_dispatch')
+    strategy:
+      fail-fast: false
+      matrix:
+        region: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.event.inputs.region)) || fromJSON('["eu", "us"]') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: "npm"
+      - run: npm ci
+      - name: Install Chromium
+        run: npx playwright install chromium --with-deps
+      - name: Run Web tests
+        env:
+          REGION: ${{ matrix.region }}
+        run: npm run test:web
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: web-results-${{ matrix.region }}
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 14
