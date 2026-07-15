@@ -1,4 +1,4 @@
-name: Test Automation
+name: CI
 
 on:
   pull_request:
@@ -12,15 +12,16 @@ on:
         default: "all"
         type: choice
         options:
+          - all
           - api
           - web
-          - all
       region:
-        description: "Region to test against"
+        description: "Region to test"
         required: true
         default: "eu"
         type: choice
         options:
+          - all
           - eu
           - us
 
@@ -28,12 +29,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: parabank-ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  lint-and-typecheck:
-    name: Lint & Typecheck
+  quality:
+    name: Quality
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -46,18 +47,75 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
 
-  api-tests:
-    name: API Tests (${{ matrix.region }})
+  api-smoke:
+    name: API EU Smoke
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: lint-and-typecheck
+    needs: quality
     if: |
-      (github.event_name == 'workflow_dispatch' && (github.event.inputs.layer == 'api' || github.event.inputs.layer == 'all')) ||
-      (github.event_name != 'workflow_dispatch')
+      (github.event_name == 'workflow_dispatch' && (github.event.inputs.layer == 'api' || github.event.inputs.layer == 'all') && (github.event.inputs.region == 'eu' || github.event.inputs.region == 'all')) ||
+      github.event_name != 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: "npm"
+      - run: npm ci
+      - name: Run API tests (EU)
+        env:
+          REGION: eu
+        run: npm run test:api -- --workers=1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: api-eu-results
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 14
+
+  web-smoke:
+    name: Web EU Smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: quality
+    if: |
+      (github.event_name == 'workflow_dispatch' && (github.event.inputs.layer == 'web' || github.event.inputs.layer == 'all') && (github.event.inputs.region == 'eu' || github.event.inputs.region == 'all')) ||
+      github.event_name != 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: "npm"
+      - run: npm ci
+      - name: Install Chromium
+        run: npx playwright install chromium --with-deps
+      - name: Run Web tests (EU)
+        env:
+          REGION: eu
+        run: npm run test:web -- --workers=1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: web-eu-results
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 14
+
+  api-matrix:
+    name: API (${{ matrix.region }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: quality
+    if: |
+      github.event_name == 'workflow_dispatch' && (github.event.inputs.layer == 'api' || github.event.inputs.layer == 'all') && github.event.inputs.region != 'eu'
     strategy:
       fail-fast: false
       matrix:
-        region: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.event.inputs.region)) || fromJSON('["eu", "us"]') }}
+        region: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.event.inputs.region)) || fromJSON('["eu"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -68,28 +126,27 @@ jobs:
       - name: Run API tests
         env:
           REGION: ${{ matrix.region }}
-        run: npm run test:api
+        run: npm run test:api -- --workers=1
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: api-results-${{ matrix.region }}
+          name: api-${{ matrix.region }}-results
           path: |
             test-results/
             playwright-report/
           retention-days: 14
 
-  web-tests:
-    name: Web Tests (${{ matrix.region }})
+  web-matrix:
+    name: Web (${{ matrix.region }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: lint-and-typecheck
+    needs: quality
     if: |
-      (github.event_name == 'workflow_dispatch' && (github.event.inputs.layer == 'web' || github.event.inputs.layer == 'all')) ||
-      (github.event_name != 'workflow_dispatch')
+      github.event_name == 'workflow_dispatch' && (github.event.inputs.layer == 'web' || github.event.inputs.layer == 'all') && github.event.inputs.region != 'eu'
     strategy:
       fail-fast: false
       matrix:
-        region: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.event.inputs.region)) || fromJSON('["eu", "us"]') }}
+        region: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.event.inputs.region)) || fromJSON('["eu"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -102,12 +159,38 @@ jobs:
       - name: Run Web tests
         env:
           REGION: ${{ matrix.region }}
-        run: npm run test:web
+        run: npm run test:web -- --workers=1
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: web-results-${{ matrix.region }}
+          name: web-${{ matrix.region }}-results
           path: |
             test-results/
             playwright-report/
           retention-days: 14
+
+  required:
+    name: Required
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [quality, api-smoke, web-smoke]
+    timeout-minutes: 5
+    steps:
+      - name: Evaluate gate
+        run: |
+          results=()
+          results+=("quality=${{ needs.quality.result }}")
+          results+=("api-smoke=${{ needs.api-smoke.result }}")
+          results+=("web-smoke=${{ needs.web-smoke.result }}")
+
+          echo "Job results: ${results[*]}"
+
+          for result in "${results[@]}"; do
+            status="${result#*=}"
+            if [ "$status" = "failure" ] || [ "$status" = "cancelled" ]; then
+              echo "::error::Required job failed or was cancelled: $result"
+              exit 1
+            fi
+          done
+
+          echo "All required jobs passed or were skipped."
