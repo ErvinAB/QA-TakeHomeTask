@@ -1,39 +1,38 @@
 import { test, expect } from "../../src/fixtures/test.fixture";
 
-test.describe("ParaBank Web - Authentication", () => {
-  test("happy path: login with valid credentials shows account overview", async ({
+test.describe("Firefly III Web - Authentication", () => {
+  test("happy path: login with valid credentials shows dashboard", async ({
     loginPage,
-    accountsPage,
+    dashboardPage,
     region,
   }) => {
     await loginPage.open();
-    await loginPage.login(
-      region.credentials.username,
-      region.credentials.password
+    await loginPage.loginExpectingSuccess(
+      region.defaultTestEmail,
+      region.testUserPassword,
     );
 
-    await accountsPage.waitUntilLoaded();
+    await dashboardPage.waitForReady();
 
-    const accountIds = await accountsPage.getDisplayedAccountIds();
-    expect(accountIds.length, "should display at least one account").toBeGreaterThan(0);
+    expect(loginPage.currentUrl()).not.toContain("/login");
+    expect(loginPage.currentUrl()).not.toContain("/register");
 
-    const isLoggedIn = await accountsPage.isLoggedIn();
-    expect(isLoggedIn, "logout link should be visible, indicating logged-in state").toBe(true);
+    const navVisible = await dashboardPage.authenticatedNav.first().isVisible();
+    expect(navVisible, "authenticated navigation should be visible").toBe(true);
   });
 
-  test("error: login with invalid credentials shows error message", async ({
+  test("error: login with invalid credentials shows error", async ({
     loginPage,
-    accountsPage,
   }) => {
     await loginPage.open();
-    await loginPage.login("nonexistent_user_xyz_999", "wrong_password_xyz_999");
-
-    const errorText = await loginPage.getErrorText();
-    expect(errorText).toContain(
-      "The username and password could not be verified"
+    await loginPage.loginExpectingFailure(
+      "nonexistent@test.example.com",
+      "wrongpassword123"
     );
 
-    const isLoggedIn = await accountsPage.isLoggedIn();
-    expect(isLoggedIn, "should not be logged in").toBe(false);
+    const errorVisible = await loginPage.errorMessage.first().isVisible();
+    expect(errorVisible, "error message should be visible").toBe(true);
+
+    expect(loginPage.currentUrl(), "should remain on login page").toContain("/login");
   });
 });

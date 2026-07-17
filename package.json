@@ -1,7 +1,7 @@
 {
-  "name": "parabank-multi-region-test-automation",
+  "name": "firefly-iii-test-automation",
   "version": "1.0.0",
-  "description": "Production-style multi-region test automation framework for ParaBank",
+  "description": "Multi-region test automation framework for Firefly III",
   "engines": {
     "node": ">=20.0.0"
   },
@@ -9,15 +9,25 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "npm run test:all",
-    "test:api": "REGION=${REGION:-eu} npx playwright test --project=api",
-    "test:web": "REGION=${REGION:-eu} npx playwright test --project=web",
-    "test:all": "REGION=${REGION:-eu} npx playwright test",
-    "report": "npx playwright show-report"
+    "test:api": "npx playwright test --project=api",
+    "test:web": "npx playwright test --project=web",
+    "test:all": "npx playwright test",
+    "report": "npx playwright show-report",
+    "env:init": "npx tsx scripts/environment.ts init",
+    "env:up": "npx tsx scripts/environment.ts up",
+    "env:ready": "npx tsx scripts/environment.ts ready",
+    "env:bootstrap": "npx tsx scripts/bootstrap.ts",
+    "env:logs": "npx tsx scripts/environment.ts logs",
+    "env:down": "npx tsx scripts/environment.ts down",
+    "env:destroy": "npx tsx scripts/environment.ts destroy",
+    "env:up:all": "REGION=eu npx tsx scripts/environment.ts up && REGION=us npx tsx scripts/environment.ts up",
+    "env:down:all": "REGION=eu npx tsx scripts/environment.ts down && REGION=us npx tsx scripts/environment.ts down"
   },
   "devDependencies": {
     "@playwright/test": "^1.50.0",
     "@types/node": "^26.1.1",
     "eslint": "^9.19.0",
+    "tsx": "^4.7.0",
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.23.0",
     "zod": "^3.24.0"

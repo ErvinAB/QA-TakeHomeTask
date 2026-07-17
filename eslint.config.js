@@ -7,6 +7,7 @@ module.exports = ts.config(
       "dist/",
       "playwright-report/",
       "test-results/",
+      ".runtime/",
     ],
   },
   {

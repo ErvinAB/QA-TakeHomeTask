@@ -2,7 +2,9 @@ node_modules/
 dist/
 playwright-report/
 test-results/
+.runtime/
 .env
+review-output/
 *.mp4
 *.png
 *.jpg

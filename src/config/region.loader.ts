@@ -1,44 +1,78 @@
+import { existsSync, readFileSync } from "fs";
+import { join } from "path";
 import type { RegionConfig } from "./region.types";
-import euRegion from "./regions/eu";
-import usRegion from "./regions/us";
+import { getRegion } from "./region.registry";
 
-const SUPPORTED_REGIONS: Record<string, RegionConfig> = {
-  eu: euRegion,
-  us: usRegion,
-};
+const RUNTIME_DIR = join(__dirname, "..", "..", ".runtime");
 
-export function loadRegion(regionName?: string): RegionConfig {
-  const name = (regionName ?? process.env.REGION ?? "eu").toLowerCase();
-
-  const region = SUPPORTED_REGIONS[name];
-  if (!region) {
-    const supported = Object.keys(SUPPORTED_REGIONS).join(", ");
-    throw new Error(
-      `Unsupported region "${name}". Supported regions: ${supported}. ` +
-        `Set the REGION environment variable to a valid value.`
-    );
+function resolveCredentials(region: RegionConfig): RegionConfig {
+  const envEmail = process.env[`${region.name.toUpperCase()}_TEST_EMAIL`];
+  const envPassword = process.env[`${region.name.toUpperCase()}_TEST_PASSWORD`];
+  if (envEmail && envPassword) {
+    return { ...region, defaultTestEmail: envEmail, testUserPassword: envPassword };
   }
 
-  if (!region.webBaseUrl || !region.apiBaseUrl) {
-    throw new Error(
-      `Region "${name}" is missing required URL configuration. ` +
-        `Check ${name.toUpperCase()}_WEB_BASE_URL and ${name.toUpperCase()}_API_BASE_URL.`
-    );
-  }
-
-  if (!region.credentials.username || !region.credentials.password) {
-    throw new Error(
-      `Region "${name}" is missing required credentials. ` +
-        `Check ${name.toUpperCase()}_USERNAME and ${name.toUpperCase()}_PASSWORD.`
-    );
-  }
-
-  if (!region.browserLocale || !region.browserTimezone) {
-    throw new Error(
-      `Region "${name}" is missing browser locale or timezone configuration. ` +
-        `Check browserLocale and browserTimezone in the region definition.`
-    );
+  const credsFile = join(RUNTIME_DIR, `${region.name}.creds.json`);
+  if (existsSync(credsFile)) {
+    try {
+      const creds = JSON.parse(readFileSync(credsFile, "utf-8"));
+      if (creds.testEmail && creds.testPassword) {
+        return { ...region, defaultTestEmail: creds.testEmail, testUserPassword: creds.testPassword };
+      }
+    } catch {
+      // fall through to defaults
+    }
   }
 
   return region;
 }
+
+export function loadRegion(regionName?: string): RegionConfig {
+  const region = getRegion(regionName);
+
+  if (!region.webBaseUrl || !region.apiBaseUrl) {
+    throw new Error(`Region "${region.name}" is missing required URL configuration.`);
+  }
+
+  if (!region.browserLocale || !region.browserTimezone) {
+    throw new Error(`Region "${region.name}" is missing browser locale or timezone configuration.`);
+  }
+
+  if (!region.currencyCode) {
+    throw new Error(`Region "${region.name}" is missing currency code configuration.`);
+  }
+
+  const loaded = resolveCredentials(region);
+
+  if (!loaded.defaultTestEmail || !loaded.defaultTestEmail.trim()) {
+    throw new Error(
+      `Region "${region.name}" is missing a test email. Run "REGION=${region.name} npm run env:init" to generate credentials.`
+    );
+  }
+
+  if (!loaded.testUserPassword || !loaded.testUserPassword.trim()) {
+    throw new Error(
+      `Region "${region.name}" is missing a test password. Run "REGION=${region.name} npm run env:init" to generate credentials.`
+    );
+  }
+
+  return loaded;
+}
+
+export function resolveToken(region: RegionConfig): string {
+  const token = process.env.FIREFLY_TOKEN;
+  if (token) return token;
+
+  const tokenFile = join(RUNTIME_DIR, `${region.name}.token.txt`);
+  if (existsSync(tokenFile)) {
+    const fileToken = readFileSync(tokenFile, "utf-8").trim();
+    if (fileToken) return fileToken;
+  }
+
+  throw new Error(
+    `No personal access token available for region "${region.name}". ` +
+      `Set FIREFLY_TOKEN or run bootstrap first.`
+  );
+}
+
+export type { ValidRegion } from "./region.registry";

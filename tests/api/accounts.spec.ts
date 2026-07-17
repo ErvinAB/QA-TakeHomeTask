@@ -1,86 +1,94 @@
 import { test, expect } from "../../src/fixtures/test.fixture";
 import {
-  AccountArraySchema,
-} from "../../src/api/models/account.schema";
+  createAssetAccount,
+  createExpenseAccount,
+} from "../../src/test-data/factories";
+import { AccountCollectionSchema } from "../../src/api/models/account.schema";
 
-test.describe("ParaBank API - Accounts", () => {
-  test("happy path: retrieve customer accounts with schema validation", async ({
-    bankApi,
+test.describe("Firefly III API - Accounts", () => {
+  test("happy path: create asset account and retrieve it by ID", async ({
+    fireflyApi,
     region,
-  }) => {
-    const customer = await bankApi.login(
-      region.credentials.username,
-      region.credentials.password
-    );
+  }, testInfo) => {
+    const accountData = createAssetAccount(region.name, testInfo.testId, region.currencyCode);
 
-    const accounts = await bankApi.getCustomerAccounts(customer.id);
+    const created = await fireflyApi.createAccount(accountData);
+    expect(created.data.id).toBeTruthy();
+    expect(created.data.attributes.name).toBe(accountData.name);
+    expect(created.data.attributes.type).toBe("asset");
+    expect(created.data.attributes.currency_code).toBe(region.currencyCode);
 
-    expect(accounts.length, "customer should have at least one account").toBeGreaterThan(0);
-
-    // Schema validation demonstrated explicitly
-    const parseResult = AccountArraySchema.safeParse(accounts);
-    expect(
-      parseResult.success,
-      `Account array schema should pass validation: ${parseResult.success ? "ok" : parseResult.error.message}`
-    ).toBe(true);
-
-    // Verify relationship integrity
-    for (const account of accounts) {
-      expect(account.customerId, `account.customerId should match customer.id`).toBe(
-        customer.id
-      );
-      expect(account.id, "account.id should be a positive integer").toBeGreaterThan(0);
-      expect(["CHECKING", "SAVINGS", "LOAN"]).toContain(account.type);
-    }
+    const retrieved = await fireflyApi.getAccount(created.data.id);
+    expect(retrieved.data.id).toBe(created.data.id);
+    expect(retrieved.data.attributes.name).toBe(accountData.name);
   });
 
-  test("happy path: get individual account details", async ({
-    bankApi,
+  test("happy path: list accounts returns data with valid pagination", async ({
+    fireflyApi,
     region,
-  }) => {
-    const customer = await bankApi.login(
-      region.credentials.username,
-      region.credentials.password
-    );
+  }, testInfo) => {
+    const accountData = createAssetAccount(region.name, testInfo.testId, region.currencyCode);
+    await fireflyApi.createAccount(accountData);
 
-    const accounts = await bankApi.getCustomerAccounts(customer.id);
-    expect(accounts.length).toBeGreaterThan(0);
-
-    const firstAccount = await bankApi.getAccount(accounts[0].id);
-    expect(firstAccount.id).toBe(accounts[0].id);
-    expect(firstAccount.customerId).toBe(customer.id);
-    expect(firstAccount.type).toBe(accounts[0].type);
+    const list = await fireflyApi.listAccounts("asset");
+    expect(list.data.length).toBeGreaterThan(0);
+    expect(list.data.length).toBeLessThanOrEqual(50);
   });
 
-  test("happy path: get account transactions", async ({
-    bankApi,
-    region,
+  test("schema validation: account list passes Zod schema", async ({
+    fireflyApi,
   }) => {
-    const customer = await bankApi.login(
-      region.credentials.username,
-      region.credentials.password
-    );
-
-    const accounts = await bankApi.getCustomerAccounts(customer.id);
-    expect(accounts.length).toBeGreaterThan(0);
-
-    const transactions = await bankApi.getAccountTransactions(accounts[0].id);
-
-    if (transactions.length > 0) {
-      const tx = transactions[0];
-      expect(tx.id).toBeGreaterThan(0);
-      expect(tx.accountId).toBe(accounts[0].id);
-      expect(["Credit", "Debit"]).toContain(tx.type);
-      expect(tx.amount).toBeGreaterThanOrEqual(0);
-      expect(tx.description).toBeTruthy();
-    }
+    const list = await fireflyApi.listAccounts();
+    const result = AccountCollectionSchema.safeParse(list);
+    expect(result.success, "account collection should pass schema validation").toBe(true);
   });
 
-  test("error: get account for nonexistent account returns 400", async ({
-    bankApi,
+  test("authorization: nonexistent resource returns 401 (Firefly III v6.6.6 route-level auth)", async ({
+    fireflyApi,
   }) => {
-    const response = await bankApi.getAccountExpectingError(99999999);
-    expect(response.status).toBe(400);
-    expect(response.body).toContain("Could not find account");
+    // Firefly III v6.6.6 returns 401 AuthenticationException for nonexistent IDs in existing routes
+    const response = await fireflyApi.getAccountExpectingError("99999999");
+    expect(response.status).toBe(401);
+    expect(response.body).toBeDefined();
+    const body = response.body as Record<string, unknown>;
+    expect(body.exception).toBe("AuthenticationException");
+  });
+
+  test("idempotent read: same account returns identical stable fields", async ({
+    fireflyApi,
+    region,
+  }, testInfo) => {
+    const accountData = createAssetAccount(region.name, testInfo.testId, region.currencyCode);
+    const created = await fireflyApi.createAccount(accountData);
+
+    const first = await fireflyApi.getAccount(created.data.id);
+    const second = await fireflyApi.getAccount(created.data.id);
+
+    expect(first.data.id).toBe(second.data.id);
+    expect(first.data.attributes.name).toBe(second.data.attributes.name);
+    expect(first.data.attributes.type).toBe(second.data.attributes.type);
+    expect(first.data.attributes.currency_code).toBe(second.data.attributes.currency_code);
+  });
+
+  test("happy path: create expense account with explicit currency", async ({
+    fireflyApi,
+    region,
+  }, testInfo) => {
+    const accountData = createExpenseAccount(region.name, testInfo.testId, region.currencyCode);
+
+    const created = await fireflyApi.createAccount(accountData);
+    expect(created.data.id).toBeTruthy();
+    expect(created.data.attributes.name).toBe(accountData.name);
+    expect(created.data.attributes.type).toBe("expense");
+    expect(created.data.attributes.currency_code).toBe(region.currencyCode);
+  });
+
+  test("currency: native user-group currency matches region configuration", async ({
+    fireflyApi,
+    region,
+  }) => {
+    const userGroups = await fireflyApi.getUserGroups();
+    expect(userGroups.length).toBeGreaterThan(0);
+    expect(userGroups[0].primary_currency_code).toBe(region.currencyCode);
   });
 });

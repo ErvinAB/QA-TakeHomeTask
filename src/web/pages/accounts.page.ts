@@ -4,51 +4,32 @@ const WAIT_TIMEOUT = 15_000;
 
 export class AccountsPage {
   readonly page: Page;
-  private readonly baseUrl: string;
-
-  readonly accountOverviewHeading: Locator;
-  readonly accountLinks: Locator;
-  readonly logoutLink: Locator;
+  readonly baseUrl: string;
 
   constructor(page: Page, baseUrl: string) {
     this.page = page;
     this.baseUrl = baseUrl;
-    this.accountOverviewHeading = page.getByRole("heading", {
-      name: "Accounts Overview",
-    });
-    this.accountLinks = page.getByRole("link").filter({
-      hasText: /^\d+$/,
-    });
-    this.logoutLink = page.getByRole("link", { name: "Log Out" });
   }
 
-  async open(): Promise<void> {
-    await this.page.goto(`${this.baseUrl}/overview.htm`);
+  async openAccountDetail(accountId: string): Promise<void> {
+    await this.page.goto(
+      `${this.baseUrl}/accounts/show/${accountId}`,
+      { waitUntil: "networkidle" }
+    );
+    await this.page.getByRole("heading", { name: /accounts/i }).first()
+      .waitFor({ state: "visible", timeout: WAIT_TIMEOUT });
   }
 
-  async waitUntilLoaded(): Promise<void> {
-    await this.accountLinks.first().waitFor({
-      state: "visible",
-      timeout: WAIT_TIMEOUT,
-    });
+  accountName(name: string): Locator {
+    return this.page.getByText(name).first();
   }
 
-  async getDisplayedAccountIds(): Promise<string[]> {
-    const links = await this.accountLinks.allTextContents();
-    return links
-      .map((text) => text.trim())
-      .filter((text) => /^\d+$/.test(text));
+  // Scoped to the account activity table (v6.6.6: .table-condensed inside .box-body)
+  transactionRows(): Locator {
+    return this.page.locator(".box-body .table-condensed tbody tr");
   }
 
-  accountLink(accountId: string): Locator {
-    return this.page.getByRole("link", { name: accountId, exact: true });
-  }
-
-  async isLoggedIn(): Promise<boolean> {
-    return this.logoutLink.isVisible();
-  }
-
-  async logout(): Promise<void> {
-    await this.logoutLink.click();
+  transactionRowsContaining(description: string): Locator {
+    return this.page.locator(".box-body .table-condensed tbody tr", { hasText: description });
   }
 }

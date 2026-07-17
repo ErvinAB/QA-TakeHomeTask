@@ -1,40 +1,46 @@
 import { test as base, type APIRequestContext } from "@playwright/test";
-import { loadRegion } from "../config/region.loader";
+import { loadRegion, resolveToken } from "../config/region.loader";
 import type { RegionConfig } from "../config/region.types";
-import { BankApiClient } from "../api/clients/bank-api.client";
+import { FireflyApiClient } from "../api/clients/firefly-api.client";
 import { LoginPage } from "../web/pages/login.page";
-import { RegistrationPage } from "../web/pages/registration.page";
+import { DashboardPage } from "../web/pages/dashboard.page";
 import { AccountsPage } from "../web/pages/accounts.page";
 
-type BankFixtures = {
+type FireflyFixtures = {
   region: RegionConfig;
+  apiToken: string;
   apiContext: APIRequestContext;
-  bankApi: BankApiClient;
+  fireflyApi: FireflyApiClient;
   loginPage: LoginPage;
-  registrationPage: RegistrationPage;
+  dashboardPage: DashboardPage;
   accountsPage: AccountsPage;
 };
 
 const resolvedRegion = loadRegion();
 
-export const test = base.extend<BankFixtures>({
+export const test = base.extend<FireflyFixtures>({
   region: async ({}, use) => {
     await use(resolvedRegion);
   },
 
+  apiToken: async ({}, use) => {
+    const token = resolveToken(resolvedRegion);
+    await use(token);
+  },
+
   apiContext: async ({ playwright }, use) => {
-    const apiContext = await playwright.request.newContext({
-      extraHTTPHeaders: {
-        Accept: "application/json",
-      },
-    });
+    const apiContext = await playwright.request.newContext();
     await use(apiContext);
     await apiContext.dispose();
   },
 
-  bankApi: async ({ apiContext }, use) => {
-    const bankApi = new BankApiClient(apiContext, resolvedRegion.apiBaseUrl);
-    await use(bankApi);
+  fireflyApi: async ({ apiContext, apiToken }, use) => {
+    const client = new FireflyApiClient(
+      apiContext,
+      resolvedRegion.apiBaseUrl,
+      apiToken
+    );
+    await use(client);
   },
 
   loginPage: async ({ page }, use) => {
@@ -42,12 +48,9 @@ export const test = base.extend<BankFixtures>({
     await use(loginPage);
   },
 
-  registrationPage: async ({ page }, use) => {
-    const registrationPage = new RegistrationPage(
-      page,
-      resolvedRegion.webBaseUrl
-    );
-    await use(registrationPage);
+  dashboardPage: async ({ page }, use) => {
+    const dashboardPage = new DashboardPage(page, resolvedRegion.webBaseUrl);
+    await use(dashboardPage);
   },
 
   accountsPage: async ({ page }, use) => {

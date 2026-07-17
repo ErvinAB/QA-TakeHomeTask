@@ -1,24 +1,23 @@
-import { defineConfig, devices } from "@playwright/test";
 import { loadRegion } from "./src/config/region.loader";
 
 const region = loadRegion();
 const isCI = !!process.env.CI;
 
-export default defineConfig({
+export default {
   testDir: "./tests",
-  fullyParallel: true,
+  fullyParallel: false,
   forbidOnly: isCI,
   retries: isCI ? 1 : 0,
-  workers: isCI ? 2 : undefined,
-  timeout: 60_000,
-  expect: { timeout: 10_000 },
-
+  workers: isCI ? 1 : undefined,
+  timeout: 120_000,
+  expect: {
+    timeout: 15_000,
+  },
   reporter: [
     ["list"],
-    ["html", { open: "never", outputFolder: "playwright-report" }],
+    ["html", { open: "never" }],
     ["junit", { outputFile: "test-results/junit.xml" }],
   ],
-
   use: {
     trace: "on-first-retry",
     screenshot: "only-on-failure",
@@ -26,7 +25,6 @@ export default defineConfig({
     actionTimeout: 15_000,
     navigationTimeout: 30_000,
   },
-
   projects: [
     {
       name: "api",
@@ -36,13 +34,12 @@ export default defineConfig({
       name: "web",
       testDir: "./tests/web",
       use: {
-        ...devices["Desktop Chrome"],
+        baseURL: region.webBaseUrl,
         locale: region.browserLocale,
         timezoneId: region.browserTimezone,
-        baseURL: region.webBaseUrl,
+        headless: true,
       },
     },
   ],
-
   outputDir: "test-results",
-});
+};

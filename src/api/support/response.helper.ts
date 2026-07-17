@@ -1,5 +1,5 @@
 import type { APIResponse } from "@playwright/test";
-import { z, type ZodSchema } from "zod";
+import type { ZodSchema } from "zod";
 
 export interface ValidatedResponse<T> {
   status: number;
@@ -10,28 +10,21 @@ export interface ValidatedResponse<T> {
 function redactSensitive(value: unknown): unknown {
   if (typeof value !== "object" || value === null) return value;
 
-  const SENSITIVE_KEYS = new Set(["password", "ssn", "token", "secret"]);
+  const SENSITIVE = new Set(["password", "token", "secret", "authorization", "app_key", "cookie"]);
 
-  if (Array.isArray(value)) {
-    return value.map(redactSensitive);
-  }
+  if (Array.isArray(value)) return value.map(redactSensitive);
 
-  const result: Record<string, unknown> = {};
-  for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
-    if (SENSITIVE_KEYS.has(key.toLowerCase())) {
-      result[key] = typeof val === "string" ? "***REDACTED***" : "[redacted]";
-    } else {
-      result[key] = redactSensitive(val);
-    }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    out[k] = SENSITIVE.has(k.toLowerCase()) ? "[redacted]" : redactSensitive(v);
   }
-  return result;
+  return out;
 }
 
-function formatBodyForError(rawText: string): string {
+function sanitize(rawText: string): string {
   try {
-    const parsed: unknown = JSON.parse(rawText);
-    const redacted = redactSensitive(parsed);
-    return JSON.stringify(redacted, null, 2).slice(0, 1000);
+    const parsed = JSON.parse(rawText);
+    return JSON.stringify(redactSensitive(parsed), null, 2).slice(0, 1000);
   } catch {
     return rawText.slice(0, 500);
   }
@@ -46,23 +39,19 @@ export async function validateResponse<T>(
   }
 ): Promise<ValidatedResponse<T>> {
   const { expectedStatus, schema, contentType } = options;
-
   const status = response.status();
   const rawText = await response.text();
 
   if (expectedStatus !== undefined && status !== expectedStatus) {
     throw new Error(
-      `Expected HTTP ${expectedStatus} but received ${status}. ` +
-        `Response body: ${formatBodyForError(rawText)}`
+      `Expected HTTP ${expectedStatus} but received ${status}. Body: ${sanitize(rawText)}`
     );
   }
 
   if (contentType !== undefined) {
-    const actualContentType = response.headers()["content-type"] ?? "";
-    if (!actualContentType.includes(contentType)) {
-      throw new Error(
-        `Expected content-type "${contentType}" but received "${actualContentType}".`
-      );
+    const actual = response.headers()["content-type"] ?? "";
+    if (!actual.includes(contentType)) {
+      throw new Error(`Expected content-type "${contentType}" but received "${actual}".`);
     }
   }
 
@@ -70,20 +59,13 @@ export async function validateResponse<T>(
   try {
     parsed = JSON.parse(rawText);
   } catch {
-    const stringResult = z.string().safeParse(rawText);
-    if (stringResult.success) {
-      return { status, body: stringResult.data as T, rawText };
-    }
-    throw new Error(
-      `Failed to parse response body as JSON. Raw response (first 500 chars): ${rawText.slice(0, 500)}`
-    );
+    parsed = rawText;
   }
 
   const result = schema.safeParse(parsed);
   if (!result.success) {
     throw new Error(
-      `Schema validation failed:\n${result.error.format()}\n` +
-        `Response body: ${formatBodyForError(rawText)}`
+      `Schema validation failed:\n${result.error.format()}\nBody: ${sanitize(rawText)}`
     );
   }
 

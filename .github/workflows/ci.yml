@@ -1,0 +1,181 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      layer:
+        description: "Test layer"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - api
+          - web
+      region:
+        description: "Region to test"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - eu
+          - us
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  prepare:
+    name: Prepare Matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      regions: ${{ steps.set.outputs.regions }}
+      layers: ${{ steps.set.outputs.layers }}
+    steps:
+      - id: set
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            REGION="${{ github.event.inputs.region }}"
+            LAYER="${{ github.event.inputs.layer }}"
+          else
+            REGION="all"
+            LAYER="all"
+          fi
+
+          if [ "$REGION" = "all" ]; then
+            echo 'regions=["eu","us"]' >> "$GITHUB_OUTPUT"
+          else
+            echo "regions=[\"$REGION\"]" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ "$LAYER" = "all" ]; then
+            if [ "$REGION" = "all" ]; then
+              echo 'layers=["api","web","all"]' >> "$GITHUB_OUTPUT"
+            else
+              echo 'layers=["all"]' >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "layers=[\"$LAYER\"]" >> "$GITHUB_OUTPUT"
+          fi
+
+  quality:
+    name: Quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: "npm"
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+
+  test:
+    name: ${{ matrix.layer }} (${{ matrix.region }})
+    runs-on: ubuntu-latest
+    needs: [prepare, quality]
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        region: ${{ fromJSON(needs.prepare.outputs.regions) }}
+        layer: ${{ fromJSON(needs.prepare.outputs.layers) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: "npm"
+      - run: npm ci
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium --with-deps
+      - name: Verify Docker
+        run: docker info && docker compose version
+      - name: Initialize runtime
+        run: REGION=${{ matrix.region }} npm run env:init
+      - name: Start Firefly III (${{ matrix.region }})
+        run: REGION=${{ matrix.region }} npm run env:up
+      - name: Bootstrap user and token
+        run: REGION=${{ matrix.region }} npm run env:bootstrap
+      - name: Load token
+        id: token
+        run: |
+          TOKEN=$(cat .runtime/${{ matrix.region }}.token.txt)
+          echo "::add-mask::${TOKEN}"
+          echo "FIREFLY_TOKEN=${TOKEN}" >> "$GITHUB_ENV"
+      - name: Run ${{ matrix.layer }} tests
+        run: |
+          if [ "${{ matrix.layer }}" = "api" ]; then
+            REGION=${{ matrix.region }} npm run test:api
+          elif [ "${{ matrix.layer }}" = "web" ]; then
+            REGION=${{ matrix.region }} npm run test:web
+          else
+            REGION=${{ matrix.region }} npm run test:all
+          fi
+      - name: Collect diagnostics
+        if: always()
+        run: |
+          mkdir -p diagnostics
+          docker compose -f infra/firefly/compose.yml \
+            -p qa-firefly-${{ matrix.region }} \
+            ps > diagnostics/compose-ps.txt 2>&1 || true
+          docker compose -f infra/firefly/compose.yml \
+            -p qa-firefly-${{ matrix.region }} \
+            logs --tail=200 > diagnostics/firefly-logs.txt 2>&1 || true
+          grep -viE '(APP_KEY|DB_PASSWORD|MARIADB_PASSWORD|password\s*=|secret\s*=)' \
+            diagnostics/firefly-logs.txt > diagnostics/firefly-logs-clean.txt 2>/dev/null || true
+          mv diagnostics/firefly-logs-clean.txt diagnostics/firefly-logs.txt 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: results-${{ matrix.layer }}-${{ matrix.region }}
+          path: |
+            test-results/
+            playwright-report/
+            diagnostics/
+          retention-days: 7
+      - name: Destroy environment
+        if: always()
+        run: REGION=${{ matrix.region }} npm run env:destroy -- --confirm
+
+  required:
+    name: Required
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [prepare, quality, test]
+    timeout-minutes: 5
+    steps:
+      - name: Evaluate gate
+        run: |
+          echo "prepare=${{ needs.prepare.result }}"
+          echo "quality=${{ needs.quality.result }}"
+          echo "test=${{ needs.test.result }}"
+
+          if [ "${{ needs.prepare.result }}" != "success" ]; then
+            echo "::error::Prepare job did not succeed (result: ${{ needs.prepare.result }})"
+            exit 1
+          fi
+
+          if [ "${{ needs.quality.result }}" != "success" ]; then
+            echo "::error::Quality job did not succeed (result: ${{ needs.quality.result }})"
+            exit 1
+          fi
+
+          if [ "${{ needs.test.result }}" != "success" ]; then
+            echo "::error::Test jobs did not all succeed (result: ${{ needs.test.result }})"
+            exit 1
+          fi
+
+          echo "All required jobs passed."

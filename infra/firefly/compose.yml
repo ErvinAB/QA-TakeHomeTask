@@ -1,0 +1,40 @@
+services:
+  app:
+    image: fireflyiii/core:version-6.6.6
+    hostname: app
+    restart: "no"
+    volumes:
+      - firefly_upload:/var/www/html/storage/upload
+    env_file:
+      - ${FF_ENV_FILE:?missing FF_ENV_FILE}
+    networks:
+      - firefly_net
+    ports:
+      - "127.0.0.1:${FIREFLY_PORT:-8080}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+  db:
+    image: mariadb:lts
+    hostname: db
+    restart: "no"
+    env_file:
+      - ${FF_DB_ENV_FILE:?missing FF_DB_ENV_FILE}
+    networks:
+      - firefly_net
+    volumes:
+      - firefly_db:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+volumes:
+  firefly_upload:
+  firefly_db:
+
+networks:
+  firefly_net:
+    driver: bridge
