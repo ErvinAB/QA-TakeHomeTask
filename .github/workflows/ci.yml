@@ -73,11 +73,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version-file: ".nvmrc"
           cache: "npm"
+          cache-dependency-path: "package-lock.json"
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
@@ -93,11 +94,12 @@ jobs:
         region: ${{ fromJSON(needs.prepare.outputs.regions) }}
         layer: ${{ fromJSON(needs.prepare.outputs.layers) }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version-file: ".nvmrc"
           cache: "npm"
+          cache-dependency-path: "package-lock.json"
       - run: npm ci
       - name: Install Playwright Chromium
         run: npx playwright install chromium --with-deps
@@ -137,7 +139,7 @@ jobs:
           grep -viE '(APP_KEY|DB_PASSWORD|MARIADB_PASSWORD|password\s*=|secret\s*=)' \
             diagnostics/firefly-logs.txt > diagnostics/firefly-logs-clean.txt 2>/dev/null || true
           mv diagnostics/firefly-logs-clean.txt diagnostics/firefly-logs.txt 2>/dev/null || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: results-${{ matrix.layer }}-${{ matrix.region }}
