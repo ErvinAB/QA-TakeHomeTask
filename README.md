@@ -136,8 +136,6 @@ REGION=us npm run env:down
 
 See [CI Strategy](docs/ci-strategy.md) for full details.
 
-An actual GitHub Actions run of this workflow has not been verified. The CI configuration is based on the local test results and Docker Compose setup.
-
 ## Region Differences
 
 | | EU | US |
